@@ -1,8 +1,8 @@
 # RawDeck ⚡ — Winamp 2.x-Style Web Radio Player
 
-> A single-file HTML5 radio player that looks like Winamp 2.x and pulls 20,000+ commercial-free stations from three community-curated GitHub repositories (donutsdelivery/deroverda/rradio).
+> A single-file HTML5 radio player that looks like Winamp 2.x and pulls 20,000+ commercial-free stations from three community-curated GitHub repositories.
 
-**No install. No build. No backend. No ads. Just open `index.html` in any browser and play.**
+**No install. No build. No backend. Just open `index.html` in any browser and play.**
 
 ---
 
@@ -10,7 +10,7 @@
 
 RawDeck is a fully self-contained web application that recreates the classic **Winamp 2.x** interface in pure HTML, CSS, and JavaScript. It aggregates radio stations from three curated open-source directories at startup, presenting them in a unified playlist with search, genre filtering, and source tagging.
 
-Every station is **commercial-free and talk-free** — hand-picked by the maintainers of the source projects (credits for hand picking the stations goes to them and thanks).
+Every station on sources deroverda and donutsdelivery are **commercial-free and talk-free** — hand-picked. 
 
 ---
 
@@ -34,9 +34,9 @@ RawDeck fetches stations dynamically at runtime from three sources (no hardcoded
 
 | Source | Type | Stations |
 |---|---|---|
-| **[rrradio](https://github.com/MarkusSteinbrecher/rrradio)** | Structured JSON | ~24,000 |
-| **[recommended-radio-streams](https://github.com/deroverda/recommended-radio-streams)** | Markdown bullet list | ~390 |
-| **[Free-Radio-NoAds-NoTalk](https://github.com/DonutsDelivery/Free-Radio-NoAds-NoTalk)** | Markdown research files | ~200 |
+| **[rrradio](https://github.com/MarkusSteinbrecher/rrradio)** | Structured JSON | ~24,000 | some embedded ads on some stations
+| **[recommended-radio-streams](https://github.com/deroverda/recommended-radio-streams)** | Markdown bullet list | ~390 | no ads
+| **[Free-Radio-NoAds-NoTalk](https://github.com/DonutsDelivery/Free-Radio-NoAds-NoTalk)** | Markdown research files | ~200 | no ads
 | **Custom URLs** (added by you) | Any stream URL | Unlimited |
 
 All stations are unified into a consistent schema: `id`, `name`, `country`, `genre`, `streamUrl`, `favicon`, `source`, and `quality_tier`.
