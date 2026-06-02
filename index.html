@@ -655,6 +655,25 @@ input[type="range"].eq-slider::-moz-range-thumb {
 .station-item .badge.source { color: #005a1a; border-color: #002a00; font-size: 7px; margin-left: 2px; }
 .station-item .favicon { width: 14px; height: 14px; margin-right: 4px; flex-shrink: 0; object-fit: contain; }
 
+/* Favorite star button */
+.station-item .fav-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  flex-shrink: 0;
+  line-height: 1;
+  color: #333;
+  opacity: 0.5;
+  transition: opacity 0.15s, transform 0.1s;
+  vertical-align: middle;
+}
+.station-item .fav-btn:hover { opacity: 1; transform: scale(1.2); }
+.station-item .fav-btn.favorited { color: #ffcc00; opacity: 1; text-shadow: 0 0 4px #ffcc00; }
+.station-item .fav-btn.favorited:hover { color: #ff9900; }
+.station-item:hover .fav-btn { opacity: 0.7; }
+
 .playlist-status {
   display: flex;
   justify-content: space-between;
@@ -1008,7 +1027,44 @@ input[type="range"].eq-slider::-moz-range-thumb {
     customIdCounter:    0,
     currentSourceType:  null,     // 'radio' | 'local' | 'custom'
     title:              'RawDeck — Radio Stream Player — Click Play to start',
+    favorites:          new Set(), // station ids that are favorited
   };
+
+  // Persist favorites to localStorage
+  function loadFavorites() {
+    try {
+      const stored = localStorage.getItem('rawdeck_favorites');
+      if (stored) {
+        const arr = JSON.parse(stored);
+        if (Array.isArray(arr)) state.favorites = new Set(arr);
+      }
+    } catch (e) { console.warn('Could not load favorites:', e); }
+  }
+
+  function saveFavorites() {
+    try {
+      localStorage.setItem('rawdeck_favorites', JSON.stringify([...state.favorites]));
+    } catch (e) { console.warn('Could not save favorites:', e); }
+  }
+
+  function toggleFavorite(stationId, event) {
+    if (event) event.stopPropagation();
+    if (state.favorites.has(stationId)) {
+      state.favorites.delete(stationId);
+    } else {
+      state.favorites.add(stationId);
+    }
+    saveFavorites();
+    // Refresh current view (keep position)
+    const scrollTop = dom.stationList.scrollTop;
+    renderPlaylist();
+    dom.stationList.scrollTop = scrollTop;
+    // Update dropdown if open
+    populateFilters();
+  }
+
+  // Init favorites from localStorage
+  loadFavorites();
 
   /* ==================================================================
      DOM REFS
@@ -1775,8 +1831,17 @@ input[type="range"].eq-slider::-moz-range-thumb {
 
     // Source
     const sources = new Set(state.stations.map(s => s.source).filter(Boolean));
-    dom.sourceSelect.innerHTML = '<option value="">All Sources</option>'
-      + Array.from(sources).sort().map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+    // Build source options: All Sources, Favorites, Custom (if any custom URLs), then individual sources
+    let optionsHtml = '<option value="">All Sources</option>';
+    optionsHtml += '<option value="__favorites__">★ Favorites</option>';
+    const hasCustom = [...sources].some(s => s === 'custom');
+    if (hasCustom) optionsHtml += '<option value="custom">Custom</option>';
+    optionsHtml += [...sources]
+      .filter(s => s !== 'custom')
+      .sort()
+      .map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`)
+      .join('');
+    dom.sourceSelect.innerHTML = optionsHtml;
   }
 
   function escapeHtml(s) {
@@ -1803,7 +1868,11 @@ input[type="range"].eq-slider::-moz-range-thumb {
       }
       // Source filter
       if (sourceFilter) {
-        if (s.source !== sourceFilter) return false;
+        if (sourceFilter === '__favorites__') {
+          if (!state.favorites.has(s.id)) return false;
+        } else if (s.source !== sourceFilter) {
+          return false;
+        }
       }
       return true;
     });
@@ -1837,10 +1906,15 @@ input[type="range"].eq-slider::-moz-range-thumb {
       if (s.quality_tier === 3) badgeHtml += '<span class="badge source">HD</span>';
       if (s.source) badgeHtml += `<span class="badge source">${escapeHtml(s.source)}</span>`;
 
+      // Star
+      const isFav = state.favorites.has(s.id);
+      const starHtml = `<button class="fav-btn${isFav ? ' favorited' : ''}" data-id="${escapeHtml(s.id)}" title="${isFav ? 'Remove from Favorites' : 'Add to Favorites'}">${isFav ? '★' : '☆'}</button>`;
+
       html += `<div class="station-item ${isActive ? 'active' : ''}" data-index="${i}">
         <span class="index">${i + 1}.</span>
         ${iconHtml}
         <span class="name">${escapeHtml(s.name)}${s.country ? ' (' + escapeHtml(s.country) + ')' : ''}</span>
+        ${starHtml}
         ${badgeHtml}
       </div>`;
     }
@@ -1849,9 +1923,19 @@ input[type="range"].eq-slider::-moz-range-thumb {
 
     // Click handler
     list.querySelectorAll('.station-item').forEach(el => {
-      el.addEventListener('click', function() {
+      el.addEventListener('click', function(e) {
+        // Ignore clicks on the favorite button itself
+        if (e.target.classList.contains('fav-btn')) return;
         const idx = parseInt(this.dataset.index);
         if (!isNaN(idx)) playStation(idx);
+      });
+    });
+
+    // Favorite button handlers
+    list.querySelectorAll('.fav-btn').forEach(btn => {
+      btn.addEventListener('click', function(e) {
+        const stationId = this.dataset.id;
+        toggleFavorite(stationId, e);
       });
     });
 
