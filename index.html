@@ -1131,6 +1131,180 @@ input[type="range"].eq-slider::-moz-range-thumb {
   }
 
   /* ==================================================================
+     RECONNECTION STATE & ENGINE
+     ================================================================== */
+  const reconnectState = {
+    retryCount: 0,
+    maxRetries: 5,
+    baseDelay: 2000,       // Start with 2 seconds
+    maxDelay: 30000,       // Max delay of 30 seconds
+    reconnectTimeoutId: null,
+    watchdogTimeoutId: null,
+    isReconnecting: false,
+    
+    // For watchdog tracking
+    lastPlayheadTime: -1,
+    lastPlayheadUpdate: 0,
+    watchdogIntervalId: null,
+  };
+
+  function startWatchdog() {
+    stopWatchdog();
+    reconnectState.lastPlayheadTime = audio.currentTime;
+    reconnectState.lastPlayheadUpdate = Date.now();
+
+    reconnectState.watchdogIntervalId = setInterval(() => {
+      // Only watch live streams (radio or custom)
+      if (state.currentSourceType === 'local' || !state.isPlaying || state.isPaused) {
+        return;
+      }
+
+      const now = Date.now();
+      const currentPos = audio.currentTime;
+
+      // Check if audio position is advancing
+      if (currentPos !== reconnectState.lastPlayheadTime) {
+        reconnectState.lastPlayheadTime = currentPos;
+        reconnectState.lastPlayheadUpdate = now;
+      } else {
+        // Playhead has stalled. If it persists for more than 8 seconds, trigger reconnect.
+        const idleDuration = now - reconnectState.lastPlayheadUpdate;
+        if (idleDuration > 8000) {
+          console.warn('Watchdog: Stream playhead stalled for 8s. Reconnecting...');
+          dom.loadStatus.textContent = '⚠ Stream stalled. Reconnecting…';
+          dom.loadStatus.className = 'error';
+          stopWatchdog();
+          triggerReconnect();
+        }
+      }
+    }, 2000);
+  }
+
+  function stopWatchdog() {
+    if (reconnectState.watchdogIntervalId) {
+      clearInterval(reconnectState.watchdogIntervalId);
+      reconnectState.watchdogIntervalId = null;
+    }
+  }
+
+  function resetReconnectState() {
+    reconnectState.retryCount = 0;
+    reconnectState.isReconnecting = false;
+    if (reconnectState.reconnectTimeoutId) {
+      clearTimeout(reconnectState.reconnectTimeoutId);
+      reconnectState.reconnectTimeoutId = null;
+    }
+  }
+
+  function triggerReconnect() {
+    // Prevent overlapping reconnect timers
+    if (reconnectState.reconnectTimeoutId) return;
+
+    // Local files don't reconnect
+    if (state.currentSourceType === 'local') return;
+
+    if (reconnectState.retryCount >= reconnectState.maxRetries) {
+      dom.loadStatus.textContent = '⚠ Lost stream. Max retries reached.';
+      dom.loadStatus.className = 'error';
+      stopPlaybackGracefully();
+      return;
+    }
+
+    reconnectState.retryCount++;
+    reconnectState.isReconnecting = true;
+
+    // Exponential backoff: baseDelay * 2^(retryCount - 1) up to maxDelay
+    const backoff = Math.min(
+      reconnectState.baseDelay * Math.pow(2, reconnectState.retryCount - 1), 
+      reconnectState.maxDelay
+    );
+    // Add 0-1000ms jitter
+    const delay = backoff + Math.floor(Math.random() * 1000);
+
+    dom.loadStatus.textContent = `🔄 Reconnecting (${reconnectState.retryCount}/${reconnectState.maxRetries}) in ${(delay / 1000).toFixed(0)}s…`;
+    dom.loadStatus.className = 'loading';
+    
+    // Visually update the track marquee with reconnect status
+    dom.marqueeText.textContent = `[Reconnecting...] ${state.title}`;
+
+    // Pause current audio instance cleanly
+    audio.pause();
+
+    reconnectState.reconnectTimeoutId = setTimeout(() => {
+      reconnectState.reconnectTimeoutId = null;
+      reconnectStream();
+    }, delay);
+  }
+
+  function reconnectStream() {
+    if (!state.isPlaying || state.isPaused) return;
+
+    const items = state.filtered;
+    if (state.currentIndex < 0 || state.currentIndex >= items.length) {
+      // For custom URLs, re-fetch original input URL
+      const currentUrl = audio.src; // fallback
+      resolveAndPlayUrl(currentUrl);
+      return;
+    }
+
+    const station = items[state.currentIndex];
+    dom.loadStatus.textContent = '🔄 Resolving fresh stream URL…';
+    dom.loadStatus.className = 'loading';
+
+    // Re-resolve stream to ensure tokens/expired links are refreshed
+    resolveStreamUrl(station.streamUrl).then(resolvedUrl => {
+      // Append a tiny timestamp to force browser cache busting
+      let finalUrl = resolvedUrl;
+      try {
+        const cacheBustUrl = new URL(resolvedUrl);
+        cacheBustUrl.searchParams.set('_rawdeck_cb', Date.now());
+        finalUrl = cacheBustUrl.toString();
+      } catch (e) {
+        // Fallback for non-standard URLs
+        finalUrl = resolvedUrl + (resolvedUrl.includes('?') ? '&' : '?') + '_rawdeck_cb=' + Date.now();
+      }
+
+      audio.src = finalUrl;
+      return audio.play();
+    }).then(() => {
+      // Success! Resets reconnect counter
+      reconnectState.retryCount = 0;
+      reconnectState.isReconnecting = false;
+      dom.loadStatus.textContent = '▶ Reconnected successfully!';
+      dom.loadStatus.className = 'success';
+      dom.marqueeText.textContent = state.title;
+      startWatchdog();
+    }).catch(err => {
+      console.error(`Reconnect attempt ${reconnectState.retryCount} failed:`, err);
+      triggerReconnect();
+    });
+  }
+
+  function resolveAndPlayUrl(url) {
+    resolveStreamUrl(url).then(resolvedUrl => {
+      audio.src = resolvedUrl;
+      return audio.play();
+    }).then(() => {
+      reconnectState.retryCount = 0;
+      reconnectState.isReconnecting = false;
+      dom.loadStatus.textContent = '▶ Reconnected successfully!';
+      dom.loadStatus.className = 'success';
+      startWatchdog();
+    }).catch(() => triggerReconnect());
+  }
+
+  function stopPlaybackGracefully() {
+    stopWatchdog();
+    resetReconnectState();
+    audio.pause();
+    audio.src = '';
+    onStop();
+    stopSpectrum();
+    startIdleSpectrum();
+    renderPlaylist();
+  }
+
+  /* ==================================================================
      WEB AUDIO API SETUP
      ================================================================== */
   let ctx = null;
@@ -1269,6 +1443,25 @@ input[type="range"].eq-slider::-moz-range-thumb {
     }
   }
 
+  /* ==================================================================
+     UPDATED AUDIO ELEMENT EVENT BINDING
+     ================================================================== */
+  
+  function onWaiting() {
+    // Only flag buffering for live network streams
+    if (state.currentSourceType !== 'local' && state.isPlaying && !state.isPaused) {
+      dom.loadStatus.textContent = '⏳ Buffering stream…';
+      dom.loadStatus.className = 'loading';
+    }
+  }
+
+  function onStalled() {
+    if (state.currentSourceType !== 'local' && state.isPlaying && !state.isPaused) {
+      dom.loadStatus.textContent = '⏳ Stream stalled, waiting for packets…';
+      dom.loadStatus.className = 'loading';
+    }
+  }
+
   function onPlay() {
     state.isPlaying = true;
     state.isPaused = false;
@@ -1276,6 +1469,13 @@ input[type="range"].eq-slider::-moz-range-thumb {
     dom.btnPlay.disabled = true;
     dom.btnPause.disabled = false;
     dom.statusStereo.className = 'active';
+    
+    // Clear reconnection state if we succeed in initial playback
+    if (!reconnectState.isReconnecting) {
+      resetReconnectState();
+    }
+    startWatchdog();
+
     if (!timeRAF) {
       timeRAF = requestAnimationFrame(function tick() {
         if (state.isPlaying && !state.isPaused) {
@@ -1294,6 +1494,7 @@ input[type="range"].eq-slider::-moz-range-thumb {
     dom.btnPlay.textContent = '►';
     dom.btnPlay.disabled = false;
     dom.btnPause.disabled = true;
+    stopWatchdog();
   }
 
   function onStop() {
@@ -1312,42 +1513,44 @@ input[type="range"].eq-slider::-moz-range-thumb {
   }
 
   function onEnded() {
-    if (state.repeat) {
-      audio.currentTime = 0;
-      audio.play().catch(() => {});
+    if (state.currentSourceType === 'local') {
+      if (state.repeat) {
+        audio.currentTime = 0;
+        audio.play().catch(() => {});
+      } else {
+        playNext();
+      }
     } else {
-      playNext();
+      // Live stream shouldn't end; treat as server dropout -> Reconnect!
+      console.warn('Live stream ended unexpectedly. Attempting reconnection...');
+      triggerReconnect();
     }
   }
 
   function onError(e) {
-    console.error('Audio error:', e);
-    const errMsg = audio.error ? (audio.error.message || 'Media format not supported') : 'Unknown stream error';
-    const code = audio.error ? audio.error.code : -1;
-    // MEDIA_ERR_SRC_NOT_SUPPORTED = 4 — often means .pls/.m3u format or dead link
-    if (code === 4 || code === 3 || code === 2) {
-      dom.loadStatus.textContent = '⚠ Stream not playable: ' + (state.title || 'unknown') + ' — ' + errMsg;
-    } else {
-      dom.loadStatus.textContent = '⚠ Playback error: ' + errMsg;
+    console.error('Audio error encountered:', e);
+    
+    if (state.currentSourceType === 'local') {
+      const errMsg = audio.error ? (audio.error.message || 'Media format not supported') : 'Unknown file error';
+      dom.loadStatus.textContent = '⚠ Local playback error: ' + errMsg;
+      dom.loadStatus.className = 'error';
+      stopPlaybackGracefully();
+      return;
     }
-    dom.loadStatus.className = 'error';
-    // Don't call onStop — let the user try another station
-    state.isPlaying = false;
-    state.isPaused = false;
-    dom.btnPlay.textContent = '►';
-    dom.btnPlay.disabled = false;
-    dom.btnPause.disabled = true;
-    dom.statusStereo.className = '';
-    if (timeRAF) { cancelAnimationFrame(timeRAF); timeRAF = null; }
-    renderPlaylist();
+
+    // Trigger Reconnect Loop for streams
+    triggerReconnect();
   }
 
+  // Hook listeners
   audio.addEventListener('timeupdate', onTimeUpdate);
   audio.addEventListener('loadedmetadata', onLoadedMetadata);
   audio.addEventListener('play', onPlay);
   audio.addEventListener('pause', onPause);
   audio.addEventListener('ended', onEnded);
   audio.addEventListener('error', onError);
+  audio.addEventListener('waiting', onWaiting);
+  audio.addEventListener('stalled', onStalled);
 
   /* ==================================================================
      SPECTRUM ANALYZER
@@ -1949,6 +2152,9 @@ input[type="range"].eq-slider::-moz-range-thumb {
     const items = state.filtered;
     if (!items || index < 0 || index >= items.length) return;
 
+    resetReconnectState();
+    stopWatchdog();
+
     const station = items[index];
     state.currentIndex = index;
     state.currentSourceType = 'radio';
@@ -2016,6 +2222,9 @@ input[type="range"].eq-slider::-moz-range-thumb {
   }
 
   function playLocalFile(file) {
+    resetReconnectState();
+    stopWatchdog();
+
     const url = URL.createObjectURL(file);
     const fileName = file.name.replace(/\.[^.]+$/, '');
 
@@ -2064,6 +2273,9 @@ input[type="range"].eq-slider::-moz-range-thumb {
 
   function playCustomUrl(url, name, genre, country) {
     if (!url) return;
+    resetReconnectState();
+    stopWatchdog();
+
     const stationName = name || url.split('/').pop() || 'Custom Stream';
 
     state.title = stationName;
@@ -2186,13 +2398,7 @@ input[type="range"].eq-slider::-moz-range-thumb {
   });
 
   dom.btnStop.addEventListener('click', () => {
-    audio.pause();
-    audio.src = '';
-    audio.load();
-    onStop();
-    stopSpectrum();
-    startIdleSpectrum();
-    renderPlaylist();
+    stopPlaybackGracefully();
   });
 
   dom.btnPrev.addEventListener('click', playPrev);
