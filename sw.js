@@ -1,6 +1,8 @@
 const CACHE_NAME = 'rawdeck-v2-cache';
 const ASSETS = [
   './index.html',
+  './style.css',
+  './app.js',
   './manifest.json',
   './radio1.png'
 ];
