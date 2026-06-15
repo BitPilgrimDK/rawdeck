@@ -1422,6 +1422,8 @@ input[type="range"].eq-slider::-moz-range-thumb {
      AUDIO ELEMENT EVENT BINDING
      ================================================================== */
   let timeRAF = null;
+  const TIME_UPDATE_INTERVAL = 100; // throttle time display to ~10fps
+  let lastTimeUpdate = 0;
 
   function updateTimeDisplay() {
     if (!isFinite(audio.currentTime)) {
@@ -1456,10 +1458,14 @@ input[type="range"].eq-slider::-moz-range-thumb {
     updateTimeDisplay();
     updatePositionSlider();
     if (!timeRAF) {
-      timeRAF = requestAnimationFrame(function tick() {
+      lastTimeUpdate = performance.now();
+      timeRAF = requestAnimationFrame(function tick(now) {
         if (state.isPlaying && !state.isPaused) {
-          updateTimeDisplay();
-          updatePositionSlider();
+          if (now - lastTimeUpdate >= TIME_UPDATE_INTERVAL) {
+            updateTimeDisplay();
+            updatePositionSlider();
+            lastTimeUpdate = now;
+          }
         }
         timeRAF = requestAnimationFrame(tick);
       });
@@ -1510,10 +1516,14 @@ input[type="range"].eq-slider::-moz-range-thumb {
     startWatchdog();
 
     if (!timeRAF) {
-      timeRAF = requestAnimationFrame(function tick() {
+      lastTimeUpdate = performance.now();
+      timeRAF = requestAnimationFrame(function tick(now) {
         if (state.isPlaying && !state.isPaused) {
-          updateTimeDisplay();
-          updatePositionSlider();
+          if (now - lastTimeUpdate >= TIME_UPDATE_INTERVAL) {
+            updateTimeDisplay();
+            updatePositionSlider();
+            lastTimeUpdate = now;
+          }
         }
         timeRAF = requestAnimationFrame(tick);
       });
@@ -1595,6 +1605,7 @@ input[type="range"].eq-slider::-moz-range-thumb {
     if (spectrumRunning) return;
     stopIdleSpectrum();
     spectrumRunning = true;
+    lastSpectrumTime = performance.now();
     drawSpectrum();
   }
 
@@ -1607,8 +1618,21 @@ input[type="range"].eq-slider::-moz-range-thumb {
     c.fillRect(0, 0, canvas.width, canvas.height);
   }
 
+  // Throttle variables for spectrum
+  const SPECTRUM_INTERVAL = 33; // ~30fps
+  let lastSpectrumTime = 0;
+
   function drawSpectrum() {
     if (!spectrumRunning) return;
+
+    // Throttle to ~30fps
+    const now = performance.now();
+    if (now - lastSpectrumTime < SPECTRUM_INTERVAL) {
+      spectrumRAF = requestAnimationFrame(drawSpectrum);
+      return;
+    }
+    lastSpectrumTime = now;
+
     const canvas = dom.spectrum;
     const c = canvas.getContext('2d');
     const w = canvas.width;
@@ -1626,38 +1650,47 @@ input[type="range"].eq-slider::-moz-range-thumb {
       const barWidth = (w - (barCount - 1) * 1) / barCount;
       const midY = h / 2;
 
+      // Set up glow once for all bars (avoids per-bar shadow toggling)
+      c.shadowColor = '#00ff41';
+      c.shadowBlur = 3;
+
+      // Single gradient covering the full vertical range, reused for every bar
+      const grad = c.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, '#006a1a');
+      grad.addColorStop(0.33, '#00cc33');
+      grad.addColorStop(0.66, '#00ff41');
+      c.fillStyle = grad;
+
       for (let i = 0; i < barCount; i++) {
-        const val = data[i] / 255;
-        // Map to index from data, skip DC
         const idx = Math.floor(i * (bufferLength / barCount));
-        const norm = data[idx] / 255;
-        const barH = Math.max(0, norm * midY * 1.6);
+        const norm = Math.min(1, data[idx] / 255);
+        const barH = Math.max(1, norm * midY * 1.6);
 
         const x = i * (barWidth + 1);
         const y = midY - barH;
-        const gradient = c.createLinearGradient(x, midY, x, midY - barH);
-        gradient.addColorStop(0, '#006a1a');
-        gradient.addColorStop(0.5, '#00cc33');
-        gradient.addColorStop(1, '#00ff41');
-        c.fillStyle = gradient;
         c.fillRect(x, y, barWidth, barH * 2);
-
-        // Add glow
-        c.shadowColor = '#00ff41';
-        c.shadowBlur = 4;
-        c.fillRect(x, y, barWidth, barH * 2);
-        c.shadowBlur = 0;
       }
+
+      c.shadowBlur = 0;
     }
 
     spectrumRAF = requestAnimationFrame(drawSpectrum);
   }
 
-  // Idle spectrum when not playing
+  // Idle spectrum when not playing (throttled to ~15fps)
   let idleSpectrumRAF = null;
+  const IDLE_INTERVAL = 66; // ~15fps
+  let lastIdleTime = 0;
   function startIdleSpectrum() {
     if (idleSpectrumRAF) return;
+    lastIdleTime = performance.now();
     function drawIdle() {
+      const now = performance.now();
+      if (now - lastIdleTime < IDLE_INTERVAL) {
+        idleSpectrumRAF = requestAnimationFrame(drawIdle);
+        return;
+      }
+      lastIdleTime = now;
       const canvas = dom.spectrum;
       const c = canvas.getContext('2d');
       const w = canvas.width;
@@ -1666,8 +1699,9 @@ input[type="range"].eq-slider::-moz-range-thumb {
       c.fillRect(0, 0, w, h);
       const barCount = 32;
       const barWidth = (w - (barCount - 1) * 1) / barCount;
+      const t = performance.now() / 500;
       for (let i = 0; i < barCount; i++) {
-        const idleH = 2 + Math.sin(Date.now() / 500 + i * 0.5) * 2;
+        const idleH = 2 + Math.sin(t + i * 0.5) * 2;
         const x = i * (barWidth + 1);
         const y = (h - idleH) / 2;
         c.fillStyle = '#001a00';
@@ -2283,6 +2317,10 @@ input[type="range"].eq-slider::-moz-range-thumb {
     resetReconnectState();
     stopWatchdog();
 
+    // Revoke previous object URL to prevent memory leak
+    if (audio.src && audio.src.startsWith('blob:')) {
+      URL.revokeObjectURL(audio.src);
+    }
     const url = URL.createObjectURL(file);
     const fileName = file.name.replace(/\.[^.]+$/, '');
 
@@ -2516,7 +2554,12 @@ input[type="range"].eq-slider::-moz-range-thumb {
   });
 
   // --- Filter controls ---
-  dom.searchInput.addEventListener('input', applyFilters);
+  // Debounce search filter to avoid re-rendering entire playlist on every keystroke
+  let searchDebounce = null;
+  dom.searchInput.addEventListener('input', () => {
+    if (searchDebounce) clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(applyFilters, 120);
+  });
   dom.genreSelect.addEventListener('change', applyFilters);
   dom.sourceSelect.addEventListener('change', applyFilters);
 

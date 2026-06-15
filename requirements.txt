@@ -1,0 +1,1 @@
+# RawDeck is a static web app — no Python dependencies
