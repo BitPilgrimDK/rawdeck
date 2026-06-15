@@ -1,0 +1,17 @@
+{
+  "short_name": "RawDeck",
+  "name": "RawDeck Audio Engine",
+  "icons": [
+    {
+      "src": "./radio1.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "./index.html",
+  "background_color": "#1a1a2e",
+  "theme_color": "#000080",
+  "display": "standalone",
+  "orientation": "portrait-primary"
+}

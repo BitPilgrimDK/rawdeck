@@ -4,6 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <title>RawDeck</title>
+<link rel="manifest" href="./manifest.json">
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js')
+        .catch(err => console.warn('PWA registration missed: ', err));
+    });
+  }
+</script>
 <style>
 /* ============================================================
    RESET, BASE & FONTS
@@ -1024,7 +1033,6 @@ input[type="range"].eq-slider::-moz-range-thumb {
     eqEnabled:          true,
     eqValues:           [0,0,0,0,0,0,0,0,0,0],
     eqPreamp:           0,
-    customIdCounter:    0,
     currentSourceType:  null,     // 'radio' | 'local' | 'custom'
     title:              'RawDeck — Radio Stream Player — Click Play to start',
     favorites:          new Set(), // station ids that are favorited
@@ -1045,6 +1053,31 @@ input[type="range"].eq-slider::-moz-range-thumb {
     try {
       localStorage.setItem('rawdeck_favorites', JSON.stringify([...state.favorites]));
     } catch (e) { console.warn('Could not save favorites:', e); }
+  }
+
+  /* ---- Custom station persistence ---- */
+  function loadCustomStations() {
+    try {
+      const stored = localStorage.getItem('rawdeck_customs');
+      if (stored) {
+        const arr = JSON.parse(stored);
+        if (Array.isArray(arr)) return arr;
+      }
+    } catch (e) { console.warn('Could not load custom stations:', e); }
+    return [];
+  }
+
+  function saveCustomStations() {
+    try {
+      const customEntries = state.stations.filter(s => s.source === 'custom');
+      const data = customEntries.map(s => ({
+        name: s.name,
+        url: s.streamUrl,
+        genre: s.genre,
+        country: s.country,
+      }));
+      localStorage.setItem('rawdeck_customs', JSON.stringify(data));
+    } catch (e) { console.warn('Could not save custom stations:', e); }
   }
 
   function toggleFavorite(stationId, event) {
@@ -1651,6 +1684,18 @@ input[type="range"].eq-slider::-moz-range-thumb {
     if (idleSpectrumRAF) { cancelAnimationFrame(idleSpectrumRAF); idleSpectrumRAF = null; }
   }
 
+  /* ---- Deterministic ID generator (stable across sessions) ---- */
+  function stableId(prefix, url, name) {
+    var hash = 0;
+    var str = String(url) + '::' + String(name);
+    for (var i = 0; i < str.length; i++) {
+      var c = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + c;
+      hash |= 0;
+    }
+    return prefix + '-' + Math.abs(hash).toString(36);
+  }
+
   /* ==================================================================
      STATION DATA — FETCHING & PARSING
      ================================================================== */
@@ -1670,7 +1715,6 @@ input[type="range"].eq-slider::-moz-range-thumb {
     if (!Array.isArray(list)) return stations;
     for (const item of list) {
       try {
-        const id = item.id || item.uuid || 'rr-' + Math.random().toString(36).slice(2, 8);
         const name = item.name || item.title || 'Unknown';
         const country = item.country || '';
         // tags or genres
@@ -1700,6 +1744,7 @@ input[type="range"].eq-slider::-moz-range-thumb {
 
         if (!streamUrl) continue;
 
+        const id = item.id || item.uuid || 'rr-' + stableId(streamUrl, name);
         stations.push({
           id: String(id),
           name: String(name),
@@ -1817,7 +1862,7 @@ input[type="range"].eq-slider::-moz-range-thumb {
       currentGenre = currentGenre.replace(/^[⭐✨★]+\s*/, '').trim();
 
       stations.push({
-        id: 'dero-' + Math.random().toString(36).slice(2, 8),
+        id: 'dero-' + stableId(streamUrl, stationName),
         name: stationName,
         country: country,
         genre: currentGenre,
@@ -1923,7 +1968,7 @@ input[type="range"].eq-slider::-moz-range-thumb {
               // Clean station name — remove trailing stream URL if accidentally included
               stationName = stationName.replace(/\s*https?:\/\/[^\s]+$/, '').trim();
               stations.push({
-                id: 'dd-' + Math.random().toString(36).slice(2, 8),
+                id: 'dd-' + stableId(streamUrl, stationName),
                 name: stationName,
                 country: country,
                 genre: currentGenre,
@@ -2002,8 +2047,21 @@ input[type="range"].eq-slider::-moz-range-thumb {
       }
     }
 
-    state.stations = unique;
-    state.filtered = [...unique];
+    // Load saved custom stations and prepend them
+    const customData = loadCustomStations();
+    const customStations = customData.map(c => ({
+      id: 'custom-' + stableId(c.url, c.name),
+      name: c.name,
+      country: c.country || '',
+      genre: c.genre || 'Custom',
+      streamUrl: c.url,
+      favicon: '',
+      source: 'custom',
+      quality_tier: 3,
+    }));
+
+    state.stations = [...customStations, ...unique];
+    state.filtered = [...state.stations];
 
     if (errors.length > 0) {
       dom.loadStatus.textContent = `⚠ ${unique.length} stations loaded. Errors: ${errors.join('; ')}`;
@@ -2248,7 +2306,7 @@ input[type="range"].eq-slider::-moz-range-thumb {
       dom.btnPause.disabled = false;
 
       // Add to station list as a temporary entry
-      const tempId = 'local-' + state.customIdCounter++;
+      const tempId = 'local-' + stableId(fileName, 'local');
       const entry = {
         id: tempId,
         name: fileName,
@@ -2303,7 +2361,7 @@ input[type="range"].eq-slider::-moz-range-thumb {
       dom.loadStatus.textContent = '▶ Playing: ' + stationName;
       dom.loadStatus.className = 'success';
 
-      const tempId = 'custom-' + state.customIdCounter++;
+      const tempId = 'custom-' + stableId(url, stationName);
       const entry = {
         id: tempId,
         name: stationName,
@@ -2319,6 +2377,7 @@ input[type="range"].eq-slider::-moz-range-thumb {
       state.currentIndex = 0;
       populateFilters();
       renderPlaylist();
+      saveCustomStations();
     }).catch(err => {
       console.error('Custom URL playback error:', err);
       // Try original URL as fallback
