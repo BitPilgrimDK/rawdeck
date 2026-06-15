@@ -14,6 +14,20 @@ self.addEventListener('install', (e) => {
 });
 
 self.addEventListener('fetch', (e) => {
+  // Exclude live audio streams and media files from Service Worker interception.
+  // This prevents the browser from killing the service worker thread after 29 seconds.
+  if (
+    e.request.destination === 'audio' || 
+    e.request.url.includes('.mp3') || 
+    e.request.url.includes('.ogg') || 
+    e.request.url.includes('.aac') || 
+    e.request.url.includes('.m4a') || 
+    e.request.url.includes('.flac') || 
+    e.request.url.includes('.wav')
+  ) {
+    return; // Pass through natively to the browser network layer
+  }
+
   e.respondWith(
     caches.match(e.request).then((response) => response || fetch(e.request))
   );
