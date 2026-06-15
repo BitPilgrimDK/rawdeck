@@ -255,7 +255,9 @@
   }
 
   function reconnectStream() {
-    if (!state.isPlaying || state.isPaused) return;
+    if (!state.isPlaying) return;
+    // Reset pause state — we are explicitly reconnecting, not resuming a paused stream
+    state.isPaused = false;
 
     const items = state.filtered;
     if (state.currentIndex < 0 || state.currentIndex >= items.length) {
