@@ -1316,11 +1316,7 @@
       // Try once more with the original URL (some streams prefer it)
       if (station.streamUrl !== audio.src) {
         audio.src = station.streamUrl;
-        audio.play().catch(e2 => {
-          dom.loadStatus.textContent = '⚠ Cannot play: ' + station.name + ' — ' + details;
-          dom.loadStatus.className = 'error';
-          console.error('Second attempt also failed:', e2);
-        }).then(() => {
+        audio.play().then(() => {
           if (state.isPlaying) return;
           state.isPlaying = true;
           state.isPaused = false;
@@ -1330,6 +1326,10 @@
           dom.loadStatus.className = 'success';
           saveLastStation(station.id);
           updateFavButton();
+        }).catch(e2 => {
+          dom.loadStatus.textContent = '⚠ Cannot play: ' + station.name + ' — ' + details;
+          dom.loadStatus.className = 'error';
+          console.error('Second attempt also failed:', e2);
         });
       } else {
         dom.loadStatus.textContent = '⚠ Cannot play: ' + station.name + ' — ' + details;
