@@ -40,6 +40,37 @@
     } catch (e) { console.warn('Could not save favorites:', e); }
   }
 
+  /* ---- Last station persistence ---- */
+  function saveLastStation(id) {
+    try { localStorage.setItem('rawdeck_last_station', id); } catch (e) { /* ignore */ }
+  }
+  function loadLastStation() {
+    try { return localStorage.getItem('rawdeck_last_station') || null; } catch (e) { return null; }
+  }
+
+  function restoreLastStation() {
+    const savedId = loadLastStation();
+    if (!savedId) return;
+    const station = state.stations.find(s => s.id === savedId);
+    if (!station) return;
+    dom.searchInput.value = '';
+    dom.genreSelect.value = '';
+    dom.sourceSelect.value = '';
+    state.filtered = [...state.stations];
+    const idx = state.filtered.findIndex(s => s.id === savedId);
+    if (idx >= 0) {
+      state.currentIndex = idx;
+      state.title = station.name + (station.genre ? ' \u2014 ' + station.genre : '');
+      dom.marqueeText.textContent = state.title;
+      dom.marqueeText.style.animation = 'none';
+      dom.marqueeText.offsetHeight;
+      dom.marqueeText.style.animation = '';
+    }
+    populateFilters();
+    renderPlaylist();
+    updateFavButton();
+  }
+
   /* ---- Custom station persistence ---- */
   function loadCustomStations() {
     try {
@@ -79,6 +110,7 @@
     dom.stationList.scrollTop = scrollTop;
     // Update dropdown if open
     populateFilters();
+    updateFavButton();
   }
 
   // Init favorites from localStorage
@@ -127,6 +159,7 @@
     btnEject:      $('btn-eject'),
     btnShuffle:    $('btn-shuffle'),
     btnRepeat:     $('btn-repeat'),
+    btnFav:        $('btn-fav'),
     btnToggleEq:   $('btn-toggle-eq'),
     btnTogglePl:   $('btn-toggle-pl'),
     btnAddUrl:     $('btn-add-url'),
@@ -1094,6 +1127,7 @@
 
     populateFilters();
     renderPlaylist();
+    restoreLastStation();
   }
 
   /* ==================================================================
@@ -1274,6 +1308,8 @@
       dom.loadStatus.textContent = '▶ Playing: ' + station.name;
       dom.loadStatus.className = 'success';
       renderPlaylist();
+      saveLastStation(station.id);
+      updateFavButton();
     }).catch(err => {
       console.error('Playback error:', err);
       const details = err.message || String(err);
@@ -1292,6 +1328,8 @@
           dom.btnPause.disabled = false;
           dom.loadStatus.textContent = '▶ Playing: ' + station.name;
           dom.loadStatus.className = 'success';
+          saveLastStation(station.id);
+          updateFavButton();
         });
       } else {
         dom.loadStatus.textContent = '⚠ Cannot play: ' + station.name + ' — ' + details;
@@ -1347,6 +1385,8 @@
       state.currentIndex = 0;
       populateFilters();
       renderPlaylist();
+      saveLastStation(entry.id);
+      updateFavButton();
     }).catch(err => {
       console.error('Local playback error:', err);
       dom.loadStatus.textContent = '⚠ Cannot play local file: ' + err.message;
@@ -1403,6 +1443,8 @@
       populateFilters();
       renderPlaylist();
       saveCustomStations();
+      saveLastStation(entry.id);
+      updateFavButton();
     }).catch(err => {
       console.error('Custom URL playback error:', err);
       // Try original URL as fallback
@@ -1511,6 +1553,24 @@
     dom.btnRepeat.classList.toggle('active');
   });
 
+  // --- FAV button ---
+  function updateFavButton() {
+    const cur = state.filtered[state.currentIndex];
+    if (cur && state.favorites.has(cur.id)) {
+      dom.btnFav.classList.add('active');
+    } else {
+      dom.btnFav.classList.remove('active');
+    }
+  }
+
+  dom.btnFav.addEventListener('click', () => {
+    const cur = state.filtered[state.currentIndex];
+    if (cur) {
+      toggleFavorite(cur.id);
+      updateFavButton();
+    }
+  });
+
   // --- Volume & Balance ---
   dom.volSlider.addEventListener('input', () => {
     state.volume = parseInt(dom.volSlider.value) / 100;
@@ -1519,6 +1579,7 @@
     } else {
       audio.volume = state.volume;
     }
+    try { localStorage.setItem('rawdeck_volume', state.volume); } catch (e) { /* ignore */ }
   });
 
   dom.balSlider.addEventListener('input', () => {
@@ -1757,6 +1818,14 @@
   // Ensure playlist starts visible
   dom.playlistWin.style.display = 'block';
 
+  // Restore saved volume
+  try {
+    const savedVol = localStorage.getItem('rawdeck_volume');
+    if (savedVol !== null) {
+      state.volume = Math.max(0, Math.min(1, parseFloat(savedVol)));
+      dom.volSlider.value = state.volume * 100;
+    }
+  } catch (e) { /* ignore */ }
   // Set initial volume/balance
   audio.volume = state.volume;
 

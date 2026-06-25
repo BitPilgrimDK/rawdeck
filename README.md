@@ -3,7 +3,6 @@
 > A modular HTML5 radio player that looks like Winamp 2.x and pulls 20,000+ commercial-free stations from three community-curated GitHub repositories (DonutsDelivery / deroverda / rrradio).
 
 **No install. No build. No backend. No ads. Just open `index.html` in any browser and play.**
-** Or run it from github pages https://bitpilgrimdk.github.io/rawdeck/ **
 
 ---
 
